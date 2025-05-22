@@ -5,7 +5,7 @@ import time
 
 app = FastAPI()
 
-SERIAL_PORT = '/dev/tty.usbserial-A60048RI'  # Change this to match your system
+SERIAL_PORT = '/dev/tty.usbmodem2101'  # Change this to match your system
 BAUD_RATE = 115200
 
 ser = None
@@ -30,7 +30,7 @@ def listen_to_arduino():
     while True:
         try:
             line = ser.readline().decode('utf-8').strip()
-            if line == "hello":
+            if not arduino_ready and line.startswith("Hello"):
                 arduino_ready = True
                 print("Arduino is online")
             elif line:
@@ -55,20 +55,53 @@ def send_command(command: str):
         arduino_ready = False
         return {"error": str(e)}
 
-@app.get("/move/a-to-b")
+@app.get("/move/up")
 def move_a_to_b():
-    return send_command("MOVE_A_TO_B")
+    return send_command("up 10000")
 
-@app.get("/move/b-to-a")
+@app.get("/move/down")
 def move_b_to_a():
-    return send_command("MOVE_B_TO_A")
+    return send_command("down 10000")
 
-@app.get("/rotate/{direction}/{degrees}")
-def rotate_motor(direction: str, degrees: int):
-    if direction not in ["forward", "backward"]:
+@app.get("/move/{direction}/{steps}")
+def rotate_motor(direction: str, steps: int):
+    if direction == "up":
+        return send_command(f"up {steps}")
+    elif direction == "down":
+        return send_command(f"down {steps}")
+    else:
         return {"error": "Invalid direction"}
-    return send_command(f"ROTATE_{direction.upper()}_{degrees}")
+
+@app.get("/stop")
+def stop_motor():
+    return send_command("stop")
+
+@app.get("/speed/{speed}")
+def set_speed(speed: int):
+    if speed < 0 or speed > 5000:
+        return {"error": "Speed must be between 0 and 5000"}
+    return send_command(f"speed {speed}")
+
+# Set acceleration and deceleration
+@app.get("/accel/{accel}")
+def set_acceleration(accel: int):
+    if accel < 0 or accel > 5000:
+        return {"error": "Acceleration must be between 0 and 5000"}
+    return send_command(f"accel {accel}")
 
 @app.get("/arduino/status")
 def check_status():
-    return {"arduino_online": arduino_ready}
+    global arduino_ready
+    if not ser or not ser.is_open:
+        return {"error": "Serial not connected"}
+    try:
+        with serial_lock:
+            ser.write(b'ping\n')
+            response = ser.readline().decode('utf-8').strip()
+            if response == "pong":
+                return {"arduino_online": True}
+            else:
+                return {"arduino_online": False}
+    except Exception as e:
+        arduino_ready = False
+        return {"error": str(e)}        
