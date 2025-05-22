@@ -1,30 +1,81 @@
 # app-converge-wall-controller
-A python script that provides a REST API for controlling a moving wall by sending serial commands to Arduino
+
+A python script that provides a REST API for controlling a rising curtain by sending serial commands to Arduino.
+
+Contains also Arduino code file (.ino) that can be flashed to Arduino using Arduino IDE.
 
 # Install
 
 pip install fastapi uvicorn pyserial
 
+> You may want to create a python virtual environment and activate that first:
+>
+> python -m venv venv
+>
+> source venv/bin/activate
+
 # Setup
 
-Find Arduino serial port on Mac:
-ls /dev/tty.usb*
+1. Make all hardware connections, power up the system, and flash the CurtainStepper.ino to your Arduino.
+
+2. Test that Arduino can control the curtain / stepper motor using Arduino IDE's serial console. Check the commands from CurtainStepper.ino, for example "up 3000".
+
+3. Close serial console from Arduino IDE so that it does not reserve it anymore.
+
+4. Find the name of the Arduino serial port.
+- On Windows, typically COM5 or similar. 
+- On Linux, typically /dev/tty/USB0 or similar. 
+- On Mac, typically /dev/tty.usbmodem2101 or similar.
+
+> You can also find that from Arduino IDE.
+
+> On Mac and Linux, you can easily list them in console:
+>
+> ls /dev/tty.usb*
+
+5. Edit the name of the serial port in main.py, for example on Mac:
+SERIAL_PORT = '/dev/tty.usbmodem2101'
+
+6. Depending on what HTTP ports are available, you may also need to edit start.sh, which sets HTTP port to 8600 by default.
+
+7. Make sure that start.sh is runnable (chmod +x start.sh).
 
 # Run
 
 Just run ./start.sh
 
-> Modify serial port and http port in main.py if necessary!
+This will start a simple server that offers the REST API and relays commands to Arduino over serial port connection (over USB).
 
 # Test
 
-Test with CURL or browser:
+Test the REST API with CURL or browser:
 
-http://localhost:8000/arduino/status
+http://localhost:8600/move/up
+http://localhost:8600/move/up/5000
 
-http://localhost:8000/move/a-to-b
-http://localhost:8000/move/b-to-a
+http://localhost:8600/move/down
+http://localhost:8600/move/down/3200
 
-http://localhost:8000/rotate/forward/90
-http://localhost:8000/rotate/backward/120
+http://localhost:8600/stop
 
+http://localhost:8600/speed/2000
+
+http://localhost:8600/accel/3000
+
+etc.
+
+# Tuning
+
+Depending on your physical setup and curtain length, you need to find suitable values for default "up" and "down" commands and edit these to main.py, where the default is currently 10000.
+
+```
+@app.get("/move/up")
+def move_up():
+    return send_command("up 10000")
+
+@app.get("/move/down")
+def move_down():
+    return send_command("down 10000")
+```
+
+> The idea is that curtain starts from "up" position, and "down" command rolls the curtain down up to the desired length. Then, "up" command should have the same value to roll it back up.

@@ -3,105 +3,142 @@ import serial
 import threading
 import time
 
+from fastapi.responses import JSONResponse
+from fastapi.requests import Request
+from fastapi import HTTPException
+
 app = FastAPI()
 
-SERIAL_PORT = '/dev/tty.usbmodem2101'  # Change this to match your system
+SERIAL_PORT = '/dev/tty.usbmodem2101'  # Update to match your device
 BAUD_RATE = 115200
+RECONNECT_INTERVAL = 5  # Seconds
 
 ser = None
 arduino_ready = False
 serial_lock = threading.Lock()
 
-def open_serial():
+def try_open_serial():
     global ser
     try:
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-        time.sleep(2)  # Wait for Arduino to reset
-        return True
+        s = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+        time.sleep(2)  # Wait for Arduino to boot/reset
+        print(f"[INFO] Serial port {SERIAL_PORT} opened")
+        return s
     except Exception as e:
-        print(f"Failed to open serial port: {e}")
-        return False
+        print(f"[WARN] Failed to open serial port: {e}")
+        return None
 
 def listen_to_arduino():
-    global arduino_ready
-    if not open_serial():
-        return
+    global ser, arduino_ready
+    buffer = ""
 
     while True:
-        try:
-            line = ser.readline().decode('utf-8').strip()
-            if not arduino_ready and line.startswith("Hello"):
-                arduino_ready = True
-                print("Arduino is online")
-            elif line:
-                print(f"Arduino says: {line}")
-        except Exception as e:
-            print(f"Error reading from serial: {e}")
+        if not ser or not ser.is_open:
+            ser = try_open_serial()
             arduino_ready = False
-            break
+            buffer = ""
 
-threading.Thread(target=listen_to_arduino, daemon=True).start()
+        if ser:
+            try:
+                # Read whatever is available
+                chunk = ser.read(ser.in_waiting or 1).decode('utf-8', errors='ignore')
+                if chunk:
+                    buffer += chunk
+                    while '\n' in buffer:
+                        line, buffer = buffer.split('\n', 1)
+                        line = line.strip()
+                        if line:
+                            print(f"[Serial] {line}")
+                            if not arduino_ready and line.startswith("Hello"):
+                                arduino_ready = True
+                                print("[INFO] Arduino is online")
+            except Exception as e:
+                print(f"[ERROR] Serial read failed: {e}")
+                try:
+                    ser.close()
+                except:
+                    pass
+                ser = None
+                arduino_ready = False
+
+        time.sleep(0.01 if ser else RECONNECT_INTERVAL)
+
+def read_serial_line(timeout=2.0):
+    start = time.time()
+    buffer = ""
+    while time.time() - start < timeout:
+        try:
+            chunk = ser.read(ser.in_waiting or 1).decode('utf-8', errors='ignore')
+            if chunk:
+                buffer += chunk
+                if '\n' in buffer:
+                    line, _ = buffer.split('\n', 1)
+                    return line.strip()
+        except Exception as e:
+            break
+    return None
 
 def send_command(command: str):
-    global arduino_ready
+    global ser, arduino_ready
     if not ser or not ser.is_open:
         return {"error": "Serial not connected"}
     try:
         with serial_lock:
             ser.write((command + '\n').encode())
-            response = ser.readline().decode('utf-8').strip()
-            return {"sent": command, "response": response}
+            response = read_serial_line()
+            if response:
+                return {"sent": command, "response": response}
+            else:
+                return {"sent": command, "error": "No response from Arduino"}
+            
     except Exception as e:
+        print(f"[ERROR] Failed to write/read: {e}")
         arduino_ready = False
+        try:
+            ser.close()
+        except:
+            pass
+        ser = None
         return {"error": str(e)}
 
+# Start listener thread
+threading.Thread(target=listen_to_arduino, daemon=True).start()
+
+# === REST API Endpoints ===
+
 @app.get("/move/up")
-def move_a_to_b():
+def move_up():
     return send_command("up 10000")
 
 @app.get("/move/down")
-def move_b_to_a():
+def move_down():
     return send_command("down 10000")
 
 @app.get("/move/{direction}/{steps}")
-def rotate_motor(direction: str, steps: int):
-    if direction == "up":
-        return send_command(f"up {steps}")
-    elif direction == "down":
-        return send_command(f"down {steps}")
-    else:
+def move(direction: str, steps: int):
+    if direction not in ("up", "down"):
         return {"error": "Invalid direction"}
+    return send_command(f"{direction} {steps}")
 
 @app.get("/stop")
-def stop_motor():
+def stop():
     return send_command("stop")
 
 @app.get("/speed/{speed}")
 def set_speed(speed: int):
-    if speed < 0 or speed > 5000:
+    if not 0 <= speed <= 5000:
         return {"error": "Speed must be between 0 and 5000"}
     return send_command(f"speed {speed}")
 
-# Set acceleration and deceleration
 @app.get("/accel/{accel}")
-def set_acceleration(accel: int):
-    if accel < 0 or accel > 5000:
+def set_accel(accel: int):
+    if not 0 <= accel <= 5000:
         return {"error": "Acceleration must be between 0 and 5000"}
     return send_command(f"accel {accel}")
 
-@app.get("/arduino/status")
-def check_status():
-    global arduino_ready
-    if not ser or not ser.is_open:
-        return {"error": "Serial not connected"}
-    try:
-        with serial_lock:
-            ser.write(b'ping\n')
-            response = ser.readline().decode('utf-8').strip()
-            if response == "pong":
-                return {"arduino_online": True}
-            else:
-                return {"arduino_online": False}
-    except Exception as e:
-        arduino_ready = False
-        return {"error": str(e)}        
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"error": f"{type(exc).__name__}: {str(exc)}"},
+    )
