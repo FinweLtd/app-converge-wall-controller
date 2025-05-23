@@ -24,7 +24,7 @@ pip install fastapi uvicorn pyserial
 
 4. Find the name of the Arduino serial port.
 - On Windows, typically COM5 or similar. 
-- On Linux, typically /dev/tty/USB0 or similar. 
+- On Linux, typically /dev/tty/USB0 or /dev/ttyACM0 or similar. 
 - On Mac, typically /dev/tty.usbmodem2101 or similar.
 
 > You can also find that from Arduino IDE.

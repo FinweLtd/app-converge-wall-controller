@@ -1,27 +1,28 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+from fastapi.requests import Request
+
 import serial
 import threading
 import time
-
-from fastapi.responses import JSONResponse
-from fastapi.requests import Request
-from fastapi import HTTPException
+import queue
 
 app = FastAPI()
 
-SERIAL_PORT = '/dev/tty.usbmodem2101'  # Update to match your device
+SERIAL_PORT = '/dev/ttyACM0'  # Update if needed
 BAUD_RATE = 115200
-RECONNECT_INTERVAL = 5  # Seconds
+RECONNECT_INTERVAL = 5  # seconds
 
 ser = None
 arduino_ready = False
 serial_lock = threading.Lock()
+response_queue = queue.Queue()
 
 def try_open_serial():
     global ser
     try:
-        s = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-        time.sleep(2)  # Wait for Arduino to boot/reset
+        s = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1)
+        time.sleep(2)  # Allow Arduino reset and boot
         print(f"[INFO] Serial port {SERIAL_PORT} opened")
         return s
     except Exception as e:
@@ -37,10 +38,9 @@ def listen_to_arduino():
             ser = try_open_serial()
             arduino_ready = False
             buffer = ""
-
+        
         if ser:
             try:
-                # Read whatever is available
                 chunk = ser.read(ser.in_waiting or 1).decode('utf-8', errors='ignore')
                 if chunk:
                     buffer += chunk
@@ -48,10 +48,14 @@ def listen_to_arduino():
                         line, buffer = buffer.split('\n', 1)
                         line = line.strip()
                         if line:
-                            print(f"[Serial] {line}")
+                            print(f"[FROM Arduino] {line}")
                             if not arduino_ready and line.startswith("Hello"):
                                 arduino_ready = True
                                 print("[INFO] Arduino is online")
+                            else:
+                                # Push all other lines to the response queue for API to consume
+                                response_queue.put(line)
+                                
             except Exception as e:
                 print(f"[ERROR] Serial read failed: {e}")
                 try:
@@ -63,34 +67,34 @@ def listen_to_arduino():
 
         time.sleep(0.01 if ser else RECONNECT_INTERVAL)
 
-def read_serial_line(timeout=2.0):
-    start = time.time()
-    buffer = ""
-    while time.time() - start < timeout:
-        try:
-            chunk = ser.read(ser.in_waiting or 1).decode('utf-8', errors='ignore')
-            if chunk:
-                buffer += chunk
-                if '\n' in buffer:
-                    line, _ = buffer.split('\n', 1)
-                    return line.strip()
-        except Exception as e:
-            break
-    return None
-
-def send_command(command: str):
+def send_command(command: str, timeout=2.0):
     global ser, arduino_ready
     if not ser or not ser.is_open:
         return {"error": "Serial not connected"}
+    
     try:
         with serial_lock:
-            ser.write((command + '\n').encode())
-            response = read_serial_line()
-            if response:
-                return {"sent": command, "response": response}
-            else:
-                return {"sent": command, "error": "No response from Arduino"}
+            # Clear old responses
+            while not response_queue.empty():
+                try:
+                    response_queue.get_nowait()
+                except queue.Empty:
+                    break
             
+            print(f"[TO Arduino] {command}")
+            
+            ser.write((command + '\n').encode())
+
+            start = time.time()
+            while time.time() - start < timeout:
+                try:
+                    line = response_queue.get(timeout=timeout - (time.time() - start))
+                    return {"sent": command, "response": line}
+                except queue.Empty:
+                    break
+            
+            return {"sent": command, "error": "No response from Arduino"}
+
     except Exception as e:
         print(f"[ERROR] Failed to write/read: {e}")
         arduino_ready = False
@@ -101,10 +105,14 @@ def send_command(command: str):
         ser = None
         return {"error": str(e)}
 
-# Start listener thread
+# Start the serial listener thread
 threading.Thread(target=listen_to_arduino, daemon=True).start()
 
 # === REST API Endpoints ===
+
+@app.get("/ping")
+def ping():
+    return send_command("ping")
 
 @app.get("/move/up")
 def move_up():
