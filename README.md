@@ -46,9 +46,31 @@ Just run ./start.sh
 
 This will start a simple server that offers the REST API and relays commands to Arduino over serial port connection (over USB).
 
+## Optional: Run as a service
+
+There is a .service script that you can use for running the curtain controller as a service. The main benefit is that it will automatically start after PC reboot and also restarted in case it crashes, making the setup easier to use and more reliable.
+
+> You can still plug in/out Arduino anytime you want, the service finds it from the specified serial port and starts to use it. You can use /ping endpoint to check remotely if Arduino is online.
+
+sudo cp curtain.service /etc/systemd/system/curtain.service
+sudo systemctl daemon-reexec
+sudo systemctl daemon-reload
+sudo systemctl enable curtain.service
+sudo systemctl start curtain.service
+
+Check status:
+sudo systemctl status curtain.service
+
+View logs:
+journalctl -u curtain.service -f
+
 # Test
 
-Test the REST API with CURL or browser:
+Test the REST API with CURL or browser. For example with curl:
+
+curl -k http://localhost:8600/ping
+
+http://localhost:8600/ping
 
 http://localhost:8600/move/up
 http://localhost:8600/move/up/5000

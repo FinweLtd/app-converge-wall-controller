@@ -1,0 +1,14 @@
+[Unit]
+Description=Converge Curtain Controller Service
+After=network.target
+
+[Service]
+User=trk
+WorkingDirectory=/home/demoConverge/curtain
+ExecStart=/home/demoConverge/curtain/start.sh >> /var/log/curtain.log 2>&1
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
