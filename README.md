@@ -70,21 +70,32 @@ Test the REST API with CURL or browser. For example with curl:
 
 curl -k http://localhost:8600/ping
 
+Check if Arduino is online, should return "pong":
 http://localhost:8600/ping
 
+Check the status of the curtain, returns "up" or "down":
+http://localhost:8600/status
+
+Move curtain to "up" position. Also changes status to "up".
 http://localhost:8600/move/up
+
+Move curtain N steps upwards. Does not change curtain position status.
 http://localhost:8600/move/up/5000
 
+Move curtain to "down" position. Also changes status to "down".
 http://localhost:8600/move/down
+
+Move curtain N steps downwards. Does not change curtain position status.
 http://localhost:8600/move/down/3200
 
+Stop the motors. Notice: motors are always automatically released after movement ends.
 http://localhost:8600/stop
 
+Change the motor speed.
 http://localhost:8600/speed/2000
 
+Change the motor acceleration.
 http://localhost:8600/accel/3000
-
-etc.
 
 # Tuning
 
