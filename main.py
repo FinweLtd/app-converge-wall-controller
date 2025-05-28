@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.requests import Request
+from fastapi.middleware.cors import CORSMiddleware
 
 import serial
 import threading
@@ -9,14 +10,26 @@ import queue
 
 app = FastAPI()
 
+# Allow all origins (⚠️ only use this in development or if you really intend to allow all origins)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all HTTP methods
+    allow_headers=["*"],  # Allow all headers
+)
+
 SERIAL_PORT = '/dev/ttyACM0'  # Update if needed
 BAUD_RATE = 115200
 RECONNECT_INTERVAL = 5  # seconds
+UP = "up"
+DOWN = "down"
 
 ser = None
 arduino_ready = False
 serial_lock = threading.Lock()
 response_queue = queue.Queue()
+curtain_status = UP  # Initial status of the curtain
 
 def try_open_serial():
     global ser
@@ -114,12 +127,21 @@ threading.Thread(target=listen_to_arduino, daemon=True).start()
 def ping():
     return send_command("ping")
 
+@app.get("/status")
+def ping():
+    global curtain_status
+    return curtain_status
+
 @app.get("/move/up")
 def move_up():
+    global curtain_status
+    curtain_status = UP
     return send_command("up 10000")
 
 @app.get("/move/down")
 def move_down():
+    global curtain_status
+    curtain_status = DOWN
     return send_command("down 10000")
 
 @app.get("/move/{direction}/{steps}")
